@@ -19,10 +19,11 @@ export async function api(path, method = 'GET', body) {
     const csrf = await fetch('/api/csrf', { credentials: 'same-origin', headers, cache: 'no-store' })
     headers['X-CSRF-TOKEN'] = (await parse(csrf)).token
   }
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const multipart = body instanceof FormData
+  if (body !== undefined && !multipart) headers['Content-Type'] = 'application/json'
   return parse(await fetch('/api' + path, {
     method, credentials: 'same-origin', headers,
-    body: body === undefined ? undefined : JSON.stringify(body)
+    body: body === undefined || multipart ? body : JSON.stringify(body)
   }))
 }
 

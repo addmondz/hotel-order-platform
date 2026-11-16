@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\OrderDeskController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\StaffAuthController;
 use Illuminate\Support\Facades\Route;
 
@@ -37,5 +38,9 @@ Route::prefix('api')->group(function () {
         Route::get('/orders/{id}/history', [OrderDeskController::class, 'orderHistory'])->whereNumber('id');
         Route::post('/orders/{id}/invoice', [OrderDeskController::class, 'invoiceOrder'])->whereNumber('id');
         Route::post('/orders/{id}/cancel', [OrderDeskController::class, 'cancelOrder'])->whereNumber('id');
+        Route::get('/orders/{id}/payments', [PaymentController::class, 'index'])->whereNumber('id');
+        Route::post('/orders/{id}/payments', [PaymentController::class, 'store'])->whereNumber('id');
+        Route::get('/orders/{id}/payments/{payment}/receipt', [PaymentController::class, 'receipt'])
+            ->whereNumber(['id', 'payment'])->name('invoice-payments.receipt');
     });
 });

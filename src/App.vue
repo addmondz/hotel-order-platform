@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import Icon from './Icon.vue'
+import InvoicePayments from './InvoicePayments.vue'
 import { api, collection, resource } from './api'
 
 const nav = [
@@ -496,6 +497,7 @@ function removePrice(item) {
           <div class="order-total"><span>Total</span><strong>{{ money(savedOrder.total) }}</strong></div>
           <p v-if="savedOrder.notes && savedOrder.status !== 'invoiced'" class="document-notes"><strong>Notes</strong><br>{{ savedOrder.notes }}</p>
         </section>
+        <InvoicePayments v-if="savedOrder.status === 'invoiced'" :key="savedOrder.id" :order-id="savedOrder.id" @sign-in-needed="session = null" />
         <section v-if="savedOrder.createdBy" class="panel activity-summary" aria-label="Staff activity">
           <h2>Staff activity</h2>
           <dl><div><dt>Entered by</dt><dd>{{ savedOrder.createdBy }}</dd></div>

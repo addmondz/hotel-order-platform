@@ -1,6 +1,6 @@
 # Hotel Order Platform
 
-**OrderDesk** is a staff-first order desk for businesses supplying hotels. Hotels order on WhatsApp as usual; your team enters orders, prepares items and issues printable invoices. The app does not connect to WhatsApp or send messages.
+**OrderDesk** is a staff-first order desk for businesses supplying hotels. Hotels order on WhatsApp as usual; your team enters orders, prepares items, issues printable invoices, and records payments received outside the app. The app does not connect to WhatsApp or send messages.
 
 Built with Laravel 12, MySQL 8.4, and Vue 3 + Vite.
 
@@ -45,11 +45,14 @@ For frontend development, keep Laravel running on port 8000 and use `npm run dev
 2. Set a hotel-specific price for a product and unit, if needed. Staff can also enter a one-off order price without affecting the hotel or catalog price.
 3. Enter a WhatsApp order as **Open**. Adjust items and quantities as you prepare it. If something is short, restock manually or remove the item. Use **Cancelled** for orders that won't go ahead.
 4. When quantities and prices are final, generate the invoice. The order moves to **Invoiced** and its invoice snapshot is locked. Print or save to PDF from the browser.
+5. After the hotel pays, open the invoice and record the amount and payment date. Optionally add a reference and attach a JPG, PNG or WebP receipt image (up to 5 MiB). The invoice shows its payment history and outstanding balance. Multiple partial payments are supported; a payment cannot exceed the remaining balance.
 
-This version does not include a hotel self-service portal, payments, monthly statements, automatic stock deductions, supplier purchase orders, or tax/e-Invoice integrations. Configure and verify the printable invoice details before using it for live billing.
+This version does not include a hotel self-service portal, online payment collection, monthly statements, automatic stock deductions, supplier purchase orders, or tax/e-Invoice integrations. Configure and verify the printable invoice details before using it for live billing.
 
 ## Verify
 
 Run `npm run build` from the root. Run `php artisan test` from `backend`; the default test setup uses in-memory SQLite. To test with MySQL, set `DB_CONNECTION=mysql` and point all `DB_*` settings to a **dedicated disposable test database**, never live data. CI checks the MySQL path.
 
 For deployment, serve `backend/public` with HTTPS, disable debug, keep the app key and database credentials private, enable secure session cookies, and use durable database storage and backups.
+
+Payment receipt images are private. Back up `backend/storage/app/private` (or its configured private storage volume) together with the database. Make the volume persistent in production, and set PHP `upload_max_filesize` to at least 5M and `post_max_size` and your reverse proxy limit high enough for the multipart request (for example 8M). Do not add a public symlink to the private receipt directory.
