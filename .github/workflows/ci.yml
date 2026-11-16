@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: testing-only
+          MYSQL_DATABASE: orderdesk_test
+          MYSQL_USER: orderdesk
+          MYSQL_PASSWORD: testing-only
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_mysql, dom
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: composer install --prefer-dist --no-interaction --working-dir=backend
+      - run: npm ci
+      - run: npm run build
+      - run: cp .env.example .env && php artisan key:generate --no-interaction
+        working-directory: backend
+      - run: php artisan test
+        working-directory: backend
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: orderdesk_test
+          DB_USERNAME: orderdesk
+          DB_PASSWORD: testing-only
