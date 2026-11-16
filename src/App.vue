@@ -377,7 +377,7 @@ function removePrice(item) {
       <button class="secondary" :disabled="busy" type="button" @click="signOut">Sign out</button>
     </div>
     <form v-else class="login-form" @submit.prevent="signIn">
-      <span class="eyebrow">{{ isStaffPath ? 'STAFF ACCESS' : 'HOTEL OWNER ACCESS' }}</span>
+      <span v-if="isStaffPath" class="eyebrow">STAFF ACCESS</span>
       <h2>{{ isStaffPath ? 'Staff sign in' : 'Hotel sign in' }}</h2>
       <p>{{ isStaffPath ? 'Use your staff account to open the order desk.' : 'Use the account issued for your hotel.' }}</p>
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
