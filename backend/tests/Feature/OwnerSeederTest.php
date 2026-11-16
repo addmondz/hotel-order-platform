@@ -38,7 +38,7 @@ class OwnerSeederTest extends TestCase
 
         config(['initial_admin.password' => '               ']);
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Set ORDERDESK_ADMIN_PASSWORD');
+        $this->expectExceptionMessage('Set ADMIN_PASSWORD');
         $this->seed();
     }
 
@@ -46,7 +46,7 @@ class OwnerSeederTest extends TestCase
     {
         config(['initial_admin.password' => null]);
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Set ORDERDESK_ADMIN_PASSWORD');
+        $this->expectExceptionMessage('Set ADMIN_PASSWORD');
         $this->seed();
     }
 }

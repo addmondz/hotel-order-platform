@@ -16,7 +16,7 @@ class OwnerSeeder extends Seeder
         $password = config('initial_admin.password');
 
         if (! is_string($password) || trim($password) === '' || ! mb_check_encoding($password, 'UTF-8') || mb_strlen($password) < 12 || strlen($password) > 72 || str_contains($password, "\0")) {
-            throw new RuntimeException('Set ORDERDESK_ADMIN_PASSWORD in backend/.env (12+ characters, up to 72 UTF-8 bytes), then retry the command.');
+            throw new RuntimeException('Set ADMIN_PASSWORD in backend/.env (12+ characters, up to 72 UTF-8 bytes), then retry the command.');
         }
 
         if (User::where('username', self::EMAIL)->exists()) {

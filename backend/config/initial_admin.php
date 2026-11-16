@@ -1,5 +1,5 @@
 <?php
 
 return [
-    'password' => env('ORDERDESK_ADMIN_PASSWORD'),
+    'password' => env('ADMIN_PASSWORD'),
 ];
