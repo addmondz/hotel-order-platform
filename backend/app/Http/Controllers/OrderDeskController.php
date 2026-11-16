@@ -24,7 +24,7 @@ class OrderDeskController extends Controller
 
     private function field(mixed $value, string $label, int $max, bool $required = false): string
     {
-        if ($value === null && !$required) {
+        if ($value === null && ! $required) {
             return '';
         }
         abort_unless(is_string($value), 400, "{$label} must be text.");
@@ -127,7 +127,7 @@ class OrderDeskController extends Controller
     {
         $units = $input['units'] ?? [];
         abort_unless(is_array($units) && array_is_list($units) && count($units) >= 1 && count($units) <= 20, 400, 'A product needs 1–20 selling units.');
-        abort_if(array_key_exists('active', $input) && !is_bool($input['active']), 400, 'Active must be true or false.');
+        abort_if(array_key_exists('active', $input) && ! is_bool($input['active']), 400, 'Active must be true or false.');
         $newProduct = [
             'name' => $this->field($input['name'] ?? null, 'Product name', 150, true),
             'sku' => $this->field($input['sku'] ?? null, 'SKU', 64),
@@ -233,7 +233,7 @@ class OrderDeskController extends Controller
     {
         [$customer, $product, $unit] = $this->priceKey($request->getContent() === '' ? $request->query() : $this->input($request));
         DB::transaction(function () use ($customer, $product, $unit) {
-            if (!DB::table('products')->where('id', $product)->lockForUpdate()->first()) {
+            if (! DB::table('products')->where('id', $product)->lockForUpdate()->first()) {
                 return;
             }
             $productUnit = DB::table('product_units')->where('product_id', $product)->where('unit', $unit)->first();
@@ -267,6 +267,7 @@ class OrderDeskController extends Controller
             'customerName' => $record->customer_name,
             'customerPhone' => $record->customer_phone,
             'status' => $record->status,
+            'source' => $record->source,
             'notes' => $record->notes,
             'total' => $record->total / 100,
             'invoiceNumber' => $record->invoice_number,
@@ -341,7 +342,20 @@ class OrderDeskController extends Controller
         return response()->json($this->writeOrder($this->input($request), (int) $request->user()->id, $this->positiveId($id)));
     }
 
-    private function writeOrder(array $input, int $userId, ?int $orderId = null): array
+    /**
+     * Apply hotel scope and catalog pricing before using the shared order writer.
+     */
+    public function createHotelOrder(Request $request): int
+    {
+        $hotelId = $request->user()?->customer_id;
+        abort_unless($hotelId, 403, 'A hotel account is required.');
+        $input = $this->input($request);
+        $input['customerId'] = $hotelId;
+
+        return $this->writeOrder($input, $request->user()->id, source: 'portal')['id'];
+    }
+
+    private function writeOrder(array $input, int $userId, ?int $orderId = null, string $source = 'staff'): array
     {
         $customerId = $this->positiveId($input['customerId'] ?? null, 'Customer ID');
         $notes = $this->field($input['notes'] ?? null, 'Notes', 4000);
@@ -354,16 +368,17 @@ class OrderDeskController extends Controller
                 'product_id' => $this->positiveId($item['productId'] ?? null, 'Product ID'),
                 'unit' => mb_strtolower($this->field($item['unit'] ?? null, 'Unit', 32, true)),
                 'quantity' => $this->scaled($item['quantity'] ?? null, 3, 10_000_000, 'Quantity', true),
-                'unit_price' => isset($item['unitPrice']) ? $this->cents($item['unitPrice']) : null,
+                'unit_price' => $source === 'staff' && isset($item['unitPrice']) ? $this->cents($item['unitPrice']) : null,
             ];
         }
 
-        return DB::transaction(function () use ($input, $customerId, $notes, $validated, $userId, $orderId) {
+        return DB::transaction(function () use ($input, $customerId, $notes, $validated, $userId, $orderId, $source) {
             $old = null;
             if ($orderId !== null) {
                 $old = DB::table('orders')->where('id', $orderId)->lockForUpdate()->first() ?? abort(404, 'Order not found.');
                 abort_unless($old->status === 'open', 409, 'Only open orders can be edited.');
                 $this->expectRevision($input, $old);
+                abort_if($old->source === 'portal' && (int) $old->customer_id !== $customerId, 409, 'A hotel-submitted order cannot be moved to a different hotel.');
             }
             // Serialize catalog changes with every order write that uses the affected products.
             $productIds = array_values(array_unique(array_column($validated, 'product_id')));
@@ -407,7 +422,10 @@ class OrderDeskController extends Controller
                 DB::table('orders')->where('id', $orderId)->update($order);
                 DB::table('order_items')->where('order_id', $orderId)->delete();
             } else {
-                $orderId = DB::table('orders')->insertGetId($order + ['created_at' => $at, 'created_by' => $userId]);
+                $orderId = DB::table('orders')->insertGetId($order + [
+                    'created_at' => $at, 'created_by' => $userId, 'source' => $source,
+                    'portal_notes' => $source === 'portal' && $notes !== '' ? $notes : null,
+                ]);
             }
             DB::table('order_items')->insert(array_map(fn ($line) => $line + ['order_id' => $orderId], $lines));
             $this->orderEvent($orderId, $userId, $old ? 'edited' : 'created', $at);

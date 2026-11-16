@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -17,7 +18,21 @@ class StaffAuthController extends Controller
 
     public function login(Request $request): JsonResponse
     {
+        return $this->authenticate($request, hotel: false);
+    }
+
+    public function hotelLogin(Request $request): JsonResponse
+    {
+        return $this->authenticate($request, hotel: true);
+    }
+
+    private function authenticate(Request $request, bool $hotel): JsonResponse
+    {
         if ($request->user()) {
+            if ($request->user()->isHotel() !== $hotel) {
+                return response()->json(['error' => 'Sign out of your current account before switching login screens.'], 409);
+            }
+
             return response()->json($this->summary($request))->header('Cache-Control', 'no-store');
         }
 
@@ -42,7 +57,10 @@ class StaffAuthController extends Controller
 
         RateLimiter::hit($account, 900);
         RateLimiter::hit($network, 900);
-        if (! Auth::attempt(['username' => $username, 'password' => $input['password']])) {
+        if (! Auth::attemptWhen(
+            ['username' => $username, 'password' => $input['password']],
+            fn (User $user): bool => $user->isHotel() === $hotel,
+        )) {
             return response()->json(['error' => 'Invalid username or password.'], 401);
         }
 
@@ -68,6 +86,12 @@ class StaffAuthController extends Controller
 
     private function summary(Request $request): array
     {
-        return ['id' => $request->user()->id, 'username' => $request->user()->username];
+        $user = $request->user();
+        $summary = ['id' => $user->id, 'username' => $user->username];
+        if ($user->isHotel()) {
+            $summary += ['role' => 'hotel', 'customerId' => $user->customer_id];
+        }
+
+        return $summary;
     }
 }

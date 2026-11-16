@@ -1,20 +1,28 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import Icon from './Icon.vue'
+import HotelPortal from './HotelPortal.vue'
+import HotelAccountTools from './HotelAccountTools.vue'
 import InvoicePayments from './InvoicePayments.vue'
 import { api, collection, resource } from './api'
 
+const currentPath = () => window.location.pathname.replace(/\/+$/, '') || '/'
+const staffPaths = { orders: '/admin/orders', customers: '/admin/hotels', products: '/admin/products', prices: '/admin/prices' }
+const initialStaffPage = Object.keys(staffPaths).find(key => staffPaths[key] === currentPath()) || 'orders'
+const isStaffPath = currentPath() === '/admin' || Object.values(staffPaths).includes(currentPath())
 const nav = [
-  { key: 'orders', label: 'Orders', icon: 'orders', subtitle: 'Enter WhatsApp orders, adjust quantities, and issue invoices.' },
+  { key: 'orders', label: 'Orders', icon: 'orders', subtitle: 'Manage WhatsApp and hotel portal orders, then issue invoices.' },
   { key: 'customers', label: 'Hotels', icon: 'customers', subtitle: 'Manage the hotels your team supplies.' },
   { key: 'products', label: 'Products', icon: 'products', subtitle: 'Set the selling units and base prices for your catalogue.' },
   { key: 'prices', label: 'Hotel prices', icon: 'prices', subtitle: 'Set agreed rates for each hotel without changing the catalogue.' },
 ]
-const page = ref('orders')
+const page = ref(initialStaffPage)
 const section = computed(() => nav.find(entry => entry.key === page.value))
 const mode = ref('')
 const loading = ref(true)
 const session = ref(null)
+const isHotelSession = computed(() => session.value?.role === 'hotel')
+const wrongPath = computed(() => Boolean(session.value) && isStaffPath === isHotelSession.value)
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -60,6 +68,12 @@ const lineCents = ({ quantity, unitPrice, suggestedPrice }) =>
 const estimatedTotal = computed(() => (draft.value?.items ?? []).reduce((sum, item) => sum + lineCents(item), 0) / 100)
 const savedOrder = computed(() => mode.value === 'view-order' ? orderView.value : null)
 
+function syncHotelUrl() {
+  if (isStaffPath || wrongPath.value) return
+  const ownerPath = ['/customer', '/customer/catalog', '/customer/orders', '/customer/transactions'].includes(currentPath())
+  const target = isHotelSession.value ? (ownerPath ? currentPath() : '/customer') : '/'
+  if (currentPath() !== target) window.history.replaceState(window.history.state, '', target)
+}
 function clearMessages() {
   error.value = ''
   notice.value = ''
@@ -73,9 +87,7 @@ async function action(run) {
   } catch (e) {
     error.value = e.message
     if (e.status === 401 && session.value) {
-      session.value = null
-      credentials.value.password = ''
-      error.value = 'Your session ended. Sign in again to continue.'
+      sessionEnded()
     }
   } finally {
     busy.value = false
@@ -83,6 +95,7 @@ async function action(run) {
 }
 
 async function refresh() {
+  if (!isStaffPath || !session.value || isHotelSession.value) return
   const [orderData, customerData, productData] = await Promise.all([api('/orders'), api('/customers'), api('/products')])
   orders.value = collection(orderData, 'orders')
   customers.value = collection(customerData, 'customers')
@@ -91,39 +104,52 @@ async function refresh() {
 onMounted(async () => {
   try {
     session.value = resource(await api('/me'), 'user')
-    if (session.value) await refresh()
+    await refresh()
   } catch (e) {
     if (e.status !== 401) error.value = e.message
   } finally {
+    syncHotelUrl()
     loading.value = false
   }
 })
 function signIn() {
   return action(async () => {
-    await api('/login', 'POST', credentials.value)
+    await api(isStaffPath ? '/login' : '/portal/login', 'POST', credentials.value)
     session.value = resource(await api('/me'), 'user')
+    syncHotelUrl()
     credentials.value.password = ''
     filter.value = 'all'
     dateFrom.value = ''
     dateTo.value = ''
-    navigate('orders')
+    if (isStaffPath) navigate(page.value, false)
     await refresh()
   })
+}
+function sessionEnded() {
+  session.value = null
+  syncHotelUrl()
+  credentials.value.password = ''
+  error.value = 'Your session ended. Sign in again to continue.'
 }
 function signOut() {
   return action(async () => {
     await api('/logout', 'POST')
     session.value = null
+    syncHotelUrl()
     prices.value = []
     orders.value = []
     customers.value = []
     products.value = []
     pricingCustomer.value = ''
-    navigate('orders')
+    if (isStaffPath && currentPath() !== '/admin') window.history.replaceState(window.history.state, '', '/admin')
+    navigate('orders', false)
   })
 }
 
-function navigate(key) {
+function navigate(key, updateUrl = true) {
+  if (updateUrl && isStaffPath && session.value && !isHotelSession.value && staffPaths[key] && currentPath() !== staffPaths[key]) {
+    window.history.replaceState(window.history.state, '', staffPaths[key])
+  }
   page.value = key
   if (key === 'prices') {
     pricingRequest++
@@ -198,6 +224,7 @@ function changeOrderCustomer() {
 function openOrder(id) {
   return action(async () => {
     orderView.value = resource(await api('/orders/' + id), 'order')
+    page.value = 'orders'
     mode.value = 'view-order'
     window.scrollTo(0, 0)
   })
@@ -209,6 +236,7 @@ function editOrder() {
     draft.value = {
       id: o.id,
       revision: o.revision,
+      source: o.source,
       customerId: o.customerId,
       notes: o.notes || '',
       items: o.items.map(line => ({ ...line, key: ++localItemId, suggestedPrice: line.unitPrice, priceSource: 'Saved price' })),
@@ -331,26 +359,36 @@ function removePrice(item) {
 
 <template>
   <main v-if="loading" class="loading-view"><span class="brand-mark"><Icon name="orders" /></span> Opening OrderDesk…</main>
-  <main v-else-if="!session" class="login-shell">
+  <main v-else-if="!session || wrongPath" class="login-shell">
     <div class="login-visual">
       <div class="brand"><span class="brand-mark"><Icon name="orders" /></span> OrderDesk</div>
       <div class="login-copy">
         <span class="eyebrow">HOTEL SUPPLY ORDERS</span>
         <h1>From order<br>to invoice.</h1>
-        <p>Record orders from hotels, confirm quantities and prices, and print the final invoice.</p>
+        <p>{{ isStaffPath ? 'Record orders from hotels, confirm quantities and prices, and print the final invoice.' : 'Order supplies at your hotel’s agreed prices and view your invoices and payments.' }}</p>
       </div>
-      <div class="login-foot">STAFF WORKSPACE</div>
+      <div class="login-foot">{{ isStaffPath ? 'STAFF WORKSPACE' : 'HOTEL PORTAL' }}</div>
     </div>
-    <form class="login-form" @submit.prevent="signIn">
-      <span class="eyebrow">STAFF ACCESS</span>
-      <h2>Sign in</h2>
-      <p>Use your staff account to open the order desk.</p>
+    <div v-if="wrongPath" class="login-form">
+      <span class="eyebrow">ORDERDESK ACCESS</span><h2>Switch account</h2>
+      <p>You’re signed in to the {{ isHotelSession ? 'hotel portal' : 'staff workspace' }}. Open that workspace or sign out to use this page.</p>
+      <div v-if="error" class="alert error" role="alert">{{ error }}</div>
+      <a :href="isHotelSession ? '/' : '/admin'" class="primary portal-login-link">{{ isHotelSession ? 'Open hotel portal' : 'Open staff workspace' }} <Icon name="arrow" /></a>
+      <button class="secondary" :disabled="busy" type="button" @click="signOut">Sign out</button>
+    </div>
+    <form v-else class="login-form" @submit.prevent="signIn">
+      <span class="eyebrow">{{ isStaffPath ? 'STAFF ACCESS' : 'HOTEL OWNER ACCESS' }}</span>
+      <h2>{{ isStaffPath ? 'Staff sign in' : 'Hotel sign in' }}</h2>
+      <p>{{ isStaffPath ? 'Use your staff account to open the order desk.' : 'Use the account issued for your hotel.' }}</p>
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
       <label>Email or username <input v-model.trim="credentials.username" autocomplete="username" required /></label>
       <label>Password <input v-model="credentials.password" type="password" autocomplete="current-password" required /></label>
       <button class="primary" :disabled="busy" type="submit">{{ busy ? 'Signing in…' : 'Sign in' }} <Icon name="arrow" /></button>
+      <a :href="isStaffPath ? '/' : '/admin'" class="portal-switch-link">{{ isStaffPath ? 'Hotel owner sign in' : 'Staff sign in' }}</a>
     </form>
   </main>
+
+  <HotelPortal v-else-if="isHotelSession" :session="session" :busy="busy" :session-error="error" @sign-out="signOut" @sign-in-needed="sessionEnded" />
 
   <div v-else class="shell">
     <aside class="sidebar">
@@ -376,7 +414,7 @@ function removePrice(item) {
           <h1>{{ mode === 'edit-order' ? (draft.id ? 'Edit order' : 'New order') : mode === 'view-order' ? (savedOrder.invoiceNumber || 'Order ' + orderCode(savedOrder.id)) : mode === 'edit-customer' ? (draft.id ? 'Edit hotel' : 'New hotel') : mode === 'edit-product' ? (draft.id ? 'Edit product' : 'New product') : section.label }}</h1>
           <p v-if="!mode">{{ section.subtitle }}</p>
           <p v-else-if="mode === 'edit-order'">Enter the customer’s items and confirm the final quantities before invoicing.</p>
-          <p v-else-if="mode === 'view-order'">Order {{ orderCode(savedOrder.id) }} · {{ date(savedOrder.createdAt) }}</p>
+          <p v-else-if="mode === 'view-order'">Order {{ orderCode(savedOrder.id) }} · {{ date(savedOrder.createdAt) }}<template v-if="savedOrder.source === 'portal'"> · Hotel portal</template></p>
         </div>
         <button v-if="!mode && page !== 'prices'" class="primary" :disabled="busy" type="button" @click="page === 'orders' ? newOrder() : page === 'customers' ? editCustomer() : editProduct()">
           <Icon name="plus" /> {{ page === 'orders' ? 'New order' : page === 'customers' ? 'New hotel' : 'New product' }}
@@ -405,7 +443,7 @@ function removePrice(item) {
             <tbody>
               <tr v-for="o in filteredOrders" :key="o.id">
                 <td><button class="text-button" :disabled="busy" type="button" @click="openOrder(o.id)">{{ orderCode(o.id) }}</button><small v-if="o.invoiceNumber">{{ o.invoiceNumber }}</small></td>
-                <td>{{ o.customerName }}</td><td>{{ date(o.createdAt) }}</td>
+                <td>{{ o.customerName }}<small v-if="o.source === 'portal'">Hotel portal</small></td><td>{{ date(o.createdAt) }}</td>
                 <td><span class="status" :class="o.status">{{ statusLabel(o.status) }}</span></td>
                 <td class="right">{{ money(o.total) }}</td>
                 <td><button class="icon-button" type="button" :disabled="busy" :aria-label="'View order ' + o.id" @click="openOrder(o.id)"><Icon name="arrow" /></button></td>
@@ -423,14 +461,15 @@ function removePrice(item) {
             <div class="section-row numbered"><span class="step" aria-hidden="true">01</span><h2>Order details</h2></div>
             <div class="fields">
               <label>Hotel
-                <select v-model="draft.customerId" :disabled="busy" required @change="changeOrderCustomer">
+                <select v-model="draft.customerId" :disabled="busy || draft.source === 'portal'" required @change="changeOrderCustomer">
                   <option value="" disabled>Select a hotel</option>
                   <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
               </label>
               <label>Notes <input v-model="draft.notes" placeholder="Optional delivery details or order reference" maxlength="1000" /></label>
             </div>
-            <p v-if="!customers.length" class="hint">Add a hotel in Hotels before entering an order.</p>
+            <p v-if="draft.source === 'portal'" class="hint">The hotel account is locked for orders submitted through the portal.</p>
+            <p v-else-if="!customers.length" class="hint">Add a hotel in Hotels before entering an order.</p>
           </section>
           <section class="panel padded">
             <div class="section-row numbered"><span class="step" aria-hidden="true">02</span><div><h2>Order items</h2><p class="hint">Adjust quantities and override a unit price only for this order.</p></div></div>
@@ -497,7 +536,7 @@ function removePrice(item) {
           <div class="order-total"><span>Total</span><strong>{{ money(savedOrder.total) }}</strong></div>
           <p v-if="savedOrder.notes && savedOrder.status !== 'invoiced'" class="document-notes"><strong>Notes</strong><br>{{ savedOrder.notes }}</p>
         </section>
-        <InvoicePayments v-if="savedOrder.status === 'invoiced'" :key="savedOrder.id" :order-id="savedOrder.id" @sign-in-needed="session = null" />
+        <InvoicePayments v-if="savedOrder.status === 'invoiced'" :key="savedOrder.id" :order-id="savedOrder.id" @sign-in-needed="sessionEnded" />
         <section v-if="savedOrder.createdBy" class="panel activity-summary" aria-label="Staff activity">
           <h2>Staff activity</h2>
           <dl><div><dt>Entered by</dt><dd>{{ savedOrder.createdBy }}</dd></div>
@@ -526,11 +565,14 @@ function removePrice(item) {
         </section>
       </template>
 
-      <form v-else-if="mode === 'edit-customer'" class="panel padded edit-panel stack" @submit.prevent="saveCustomer">
+      <template v-else-if="mode === 'edit-customer'">
+      <form class="panel padded edit-panel stack" @submit.prevent="saveCustomer">
         <div class="fields"><label>Hotel or company name <input v-model.trim="draft.name" required maxlength="160" /></label><label>Phone <input v-model.trim="draft.phone" type="tel" maxlength="60" /></label></div>
         <label>Notes <textarea v-model="draft.notes" rows="3" maxlength="1000"></textarea></label>
         <div class="actions"><button class="secondary" :disabled="busy" type="button" @click="back">Back</button><button class="primary" :disabled="busy" type="submit">Save hotel</button></div>
       </form>
+      <HotelAccountTools v-if="draft.id" :hotel="draft" @open-order="openOrder" @sign-in-needed="sessionEnded" />
+      </template>
 
       <template v-else-if="page === 'products' && !mode">
         <section class="panel">
@@ -603,3 +645,8 @@ function removePrice(item) {
     </main>
   </div>
 </template>
+
+<style scoped>
+.portal-login-link { text-decoration: none; }
+.portal-switch-link { color: var(--brand); font-size: .84rem; justify-self: start; }
+</style>

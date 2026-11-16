@@ -10,8 +10,13 @@ class User extends Authenticatable
 
     protected $hidden = ['password', 'remember_token'];
 
+    public function isHotel(): bool
+    {
+        return $this->customer_id !== null;
+    }
+
     protected function casts(): array
     {
-        return ['password' => 'hashed'];
+        return ['password' => 'hashed', 'customer_id' => 'integer'];
     }
 }
