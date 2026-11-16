@@ -20,6 +20,9 @@ class OwnerSeederTest extends TestCase
 
         $owner = User::where('email', OwnerSeeder::EMAIL)->sole();
         $this->assertSame(OwnerSeeder::EMAIL, $owner->username);
+        $this->assertDatabaseCount('products', 0);
+        $this->assertDatabaseCount('customers', 0);
+        $this->assertDatabaseCount('orders', 0);
         $hash = $owner->password;
         $this->assertTrue(Hash::check('local-seeder-test-fixture-1', $hash));
 

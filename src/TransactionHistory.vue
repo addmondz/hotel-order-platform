@@ -116,7 +116,7 @@ watch([month, endpoint], load, { immediate: true })
 .ledger-totals > div { padding: 10px 11px; min-width: 0; background: #f7faf8; border: 1px solid var(--line); border-radius: 7px; }
 .ledger-totals .ledger-closing { background: #edf7f0; }
 .ledger-totals dt { color: var(--muted); font-size: .75rem; }
-.ledger-totals dd { margin: 4px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.ledger-totals dd { margin: 4px 0 0; font-weight: 640; overflow-wrap: anywhere; }
 .ledger-table { min-width: 550px; }
 .ledger-table td { vertical-align: top; }
 .ledger-table td:first-child, .ledger-number { white-space: nowrap; font-variant-numeric: tabular-nums; }

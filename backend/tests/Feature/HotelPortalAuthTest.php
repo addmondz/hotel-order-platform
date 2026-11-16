@@ -13,7 +13,7 @@ class HotelPortalAuthTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_portal_and_admin_have_separate_login_endpoints_and_roles(): void
+    public function test_shared_login_authenticates_hotel_accounts_and_preserves_role_boundaries(): void
     {
         $staff = User::create(['username' => 'test.staff', 'password' => 'staff-test-password']);
         $hotel = $this->hotel();
@@ -22,16 +22,11 @@ class HotelPortalAuthTest extends TestCase
         $owner->customer_id = $hotel;
         $owner->save();
 
-        $this->postJson('/api/login', $credentials)->assertUnauthorized();
-        $this->assertGuest();
-        $this->postJson('/api/portal/login', ['username' => $staff->username, 'password' => 'staff-test-password'])
-            ->assertUnauthorized();
-        $this->assertGuest();
-
         $summary = ['id' => $owner->id, 'username' => $owner->username, 'role' => 'hotel', 'customerId' => $hotel];
-        $this->postJson('/api/portal/login', $credentials)->assertExactJson($summary);
+        $this->postJson('/api/login', $credentials)->assertOk()->assertExactJson($summary);
+        $this->assertAuthenticatedAs($owner);
         $this->getJson('/api/me')->assertExactJson($summary);
-        $this->postJson('/api/login', $credentials)->assertConflict();
+        $this->postJson('/api/login', $credentials)->assertOk()->assertExactJson($summary);
 
         foreach (['customers', 'orders', 'products', "prices?customerId={$hotel}", "customers/{$hotel}/portal-account", "customers/{$hotel}/transactions", 'orders/1/payments', 'orders/1/payments/1/receipt'] as $path) {
             $this->getJson('/api/'.$path)->assertForbidden();
@@ -40,9 +35,39 @@ class HotelPortalAuthTest extends TestCase
         $this->putJson("/api/customers/{$hotel}/portal-account", $credentials)->assertForbidden();
         $this->postJson('/api/logout')->assertOk();
 
-        $this->actingAs($staff)->getJson('/api/portal/catalog')->assertForbidden();
-        $this->actingAs($staff)->postJson('/api/portal/orders')->assertForbidden();
-        $this->actingAs($staff)->getJson('/api/portal/transactions')->assertForbidden();
+        $this->postJson('/api/login', ['username' => $staff->username, 'password' => 'staff-test-password'])
+            ->assertOk()->assertExactJson(['id' => $staff->id, 'username' => $staff->username]);
+        $this->assertAuthenticatedAs($staff);
+        $this->getJson('/api/orders')->assertOk();
+        $this->getJson('/api/portal/catalog')->assertForbidden();
+        $this->postJson('/api/portal/orders')->assertForbidden();
+        $this->getJson('/api/portal/transactions')->assertForbidden();
+    }
+
+    public function test_shared_login_rejects_incorrect_hotel_credentials(): void
+    {
+        $owner = new User(['username' => 'manager@example.test', 'password' => 'hotel-test-password']);
+        $owner->customer_id = $this->hotel();
+        $owner->save();
+
+        $this->postJson('/api/login', ['username' => $owner->username, 'password' => 'wrong-test-password'])
+            ->assertUnauthorized();
+        $this->assertGuest();
+        $this->getJson('/api/me')->assertUnauthorized();
+    }
+
+    public function test_legacy_portal_login_remains_compatible_with_hotel_accounts(): void
+    {
+        $staff = User::create(['username' => 'test.staff', 'password' => 'staff-test-password']);
+        $this->postJson('/api/portal/login', ['username' => $staff->username, 'password' => 'staff-test-password'])
+            ->assertUnauthorized();
+        $this->assertGuest();
+
+        $owner = new User(['username' => 'manager@example.test', 'password' => 'hotel-test-password']);
+        $owner->customer_id = $this->hotel();
+        $owner->save();
+        $this->postJson('/api/portal/login', ['username' => $owner->username, 'password' => 'hotel-test-password'])
+            ->assertOk()->assertJsonPath('role', 'hotel')->assertJsonPath('customerId', $owner->customer_id);
     }
 
     public function test_staff_can_manage_only_one_portal_account_per_hotel(): void

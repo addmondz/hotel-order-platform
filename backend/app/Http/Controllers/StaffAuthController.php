@@ -18,7 +18,7 @@ class StaffAuthController extends Controller
 
     public function login(Request $request): JsonResponse
     {
-        return $this->authenticate($request, hotel: false);
+        return $this->authenticate($request);
     }
 
     public function hotelLogin(Request $request): JsonResponse
@@ -26,10 +26,10 @@ class StaffAuthController extends Controller
         return $this->authenticate($request, hotel: true);
     }
 
-    private function authenticate(Request $request, bool $hotel): JsonResponse
+    private function authenticate(Request $request, ?bool $hotel = null): JsonResponse
     {
         if ($request->user()) {
-            if ($request->user()->isHotel() !== $hotel) {
+            if ($hotel !== null && $request->user()->isHotel() !== $hotel) {
                 return response()->json(['error' => 'Sign out of your current account before switching login screens.'], 409);
             }
 
@@ -59,7 +59,7 @@ class StaffAuthController extends Controller
         RateLimiter::hit($network, 900);
         if (! Auth::attemptWhen(
             ['username' => $username, 'password' => $input['password']],
-            fn (User $user): bool => $user->isHotel() === $hotel,
+            fn (User $user): bool => $hotel === null || $user->isHotel() === $hotel,
         )) {
             return response()->json(['error' => 'Invalid username or password.'], 401);
         }

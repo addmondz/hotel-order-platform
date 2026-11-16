@@ -61,7 +61,7 @@ async function save() {
     if (request !== requestId) return
     account.value = result.account
     close()
-    notice.value = 'Hotel owner login saved.'
+    notice.value = 'Customer portal login saved.'
   } catch (e) {
     if (request !== requestId) return
     if (e.status === 401) emit('sign-in-needed')
@@ -77,8 +77,8 @@ async function save() {
     <section class="panel padded" aria-labelledby="hotel-owner-access">
       <header class="section-row">
         <div>
-          <h2 id="hotel-owner-access">Hotel owner access</h2>
-          <p class="hint">One portal login for this hotel. The owner signs in on the home page, not at /admin.</p>
+          <h2 id="hotel-owner-access">Customer portal access</h2>
+          <p class="hint">Optional login for this customer. They sign in on the home page.</p>
         </div>
         <button v-if="!loading && !editing && !error" type="button" class="secondary" @click="edit">
           {{ account ? 'Change login or password' : 'Create owner login' }}

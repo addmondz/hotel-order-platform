@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import Icon from './Icon.vue'
+import BrandLogo from './BrandLogo.vue'
 import TransactionHistory from './TransactionHistory.vue'
 import { api, collection, resource } from './api'
 
@@ -45,6 +46,8 @@ const lineTotal = row => Math.round(Math.round(Number(row.price) * 100) * Math.r
 const estimate = computed(() => cart.value.reduce((total, line) => total + Math.round(lineTotal(line) * 100), 0) / 100)
 const brandName = computed(() => catalog.value?.hotel?.name || props.session.username)
 const controlsBusy = computed(() => props.busy || pending.value)
+const userMenu = ref(false)
+function toggleUserMenu() { userMenu.value = !userMenu.value }
 
 async function act(run) {
   if (pending.value) return
@@ -136,20 +139,36 @@ function printOrder() { window.print() }
 <template>
   <div class="shell hotel-portal">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><Icon name="orders" /></span><div>OrderDesk<span>HOTEL PORTAL</span></div></div>
+      <BrandLogo />
       <nav aria-label="Hotel portal">
         <span class="nav-caption">YOUR HOTEL</span>
         <button v-for="item in tabs" :key="item.key" type="button" :class="{ selected: tab === item.key }" :aria-current="tab === item.key ? 'page' : undefined" :disabled="controlsBusy" @click="navigate(item.key)"><Icon :name="item.icon" />{{ item.name }}</button>
       </nav>
-      <div class="side-footer">
-        <div class="avatar">{{ (brandName || 'H')[0].toUpperCase() }}</div>
-        <div class="session-name">{{ brandName }}<small>Hotel account</small></div>
-        <button class="icon-button" type="button" title="Sign out" aria-label="Sign out" :disabled="controlsBusy" @click="emit('sign-out')"><Icon name="logout" /></button>
-      </div>
     </aside>
 
     <main class="content">
-      <div class="topline"><span>{{ brandName }}</span><span aria-hidden="true">/</span>{{ section.name }}<strong>Hotel portal</strong></div>
+      <div class="topline">
+        <span>{{ brandName }}</span><span aria-hidden="true">/</span>{{ section.name }}
+        <div class="user-menu">
+          <button class="user-menu-trigger" type="button" @click="toggleUserMenu" :aria-expanded="userMenu">
+            <div class="avatar">{{ (brandName || 'H')[0].toUpperCase() }}</div>
+            <span class="user-menu-name">{{ brandName }}</span>
+            <Icon name="chevron" />
+          </button>
+          <div v-if="userMenu" class="user-dropdown-backdrop" @click="userMenu = false"></div>
+          <div v-if="userMenu" class="user-dropdown">
+            <div class="user-dropdown-header">
+              <div class="avatar">{{ (brandName || 'H')[0].toUpperCase() }}</div>
+              <div class="user-dropdown-info">
+                <strong>{{ brandName }}</strong>
+                <small>Hotel account</small>
+              </div>
+            </div>
+            <hr />
+            <button type="button" class="user-dropdown-item" :disabled="controlsBusy" @click="userMenu = false; emit('sign-out')"><Icon name="logout" /> Sign out</button>
+          </div>
+        </div>
+      </div>
       <header class="page-head">
         <div>
           <button v-if="details" class="back-link" type="button" :disabled="controlsBusy" @click="navigate('orders')"><Icon name="back" /> Back to my orders</button>

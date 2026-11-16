@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import Icon from './Icon.vue'
+import BrandLogo from './BrandLogo.vue'
+import PasswordField from './PasswordField.vue'
 import HotelPortal from './HotelPortal.vue'
 import HotelAccountTools from './HotelAccountTools.vue'
 import InvoicePayments from './InvoicePayments.vue'
@@ -9,12 +11,11 @@ import { api, collection, resource } from './api'
 const currentPath = () => window.location.pathname.replace(/\/+$/, '') || '/'
 const staffPaths = { orders: '/admin/orders', customers: '/admin/hotels', products: '/admin/products', prices: '/admin/prices' }
 const initialStaffPage = Object.keys(staffPaths).find(key => staffPaths[key] === currentPath()) || 'orders'
-const isStaffPath = currentPath() === '/admin' || Object.values(staffPaths).includes(currentPath())
 const nav = [
   { key: 'orders', label: 'Orders', icon: 'orders', subtitle: 'Manage WhatsApp and hotel portal orders, then issue invoices.' },
-  { key: 'customers', label: 'Hotels', icon: 'customers', subtitle: 'Manage the hotels your team supplies.' },
+  { key: 'customers', label: 'Customers', icon: 'customers', subtitle: 'Manage the customers your team supplies.' },
   { key: 'products', label: 'Products', icon: 'products', subtitle: 'Set the selling units and base prices for your catalogue.' },
-  { key: 'prices', label: 'Hotel prices', icon: 'prices', subtitle: 'Set agreed rates for each hotel without changing the catalogue.' },
+  { key: 'prices', label: 'Customer prices', icon: 'prices', subtitle: 'Set agreed rates for each customer without changing the catalogue.' },
 ]
 const page = ref(initialStaffPage)
 const section = computed(() => nav.find(entry => entry.key === page.value))
@@ -22,7 +23,6 @@ const mode = ref('')
 const loading = ref(true)
 const session = ref(null)
 const isHotelSession = computed(() => session.value?.role === 'hotel')
-const wrongPath = computed(() => Boolean(session.value) && isStaffPath === isHotelSession.value)
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -39,6 +39,7 @@ const dateFrom = ref('')
 const dateTo = ref('')
 const pricingCustomer = ref('')
 const pricingDraft = ref(null)
+
 const currency = new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR', currencyDisplay: 'narrowSymbol' })
 const dateFormat = new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeZone: 'Asia/Kuala_Lumpur' })
 const sellerName = import.meta.env.VITE_INVOICE_SELLER_NAME || 'OrderDesk'
@@ -68,10 +69,16 @@ const lineCents = ({ quantity, unitPrice, suggestedPrice }) =>
 const estimatedTotal = computed(() => (draft.value?.items ?? []).reduce((sum, item) => sum + lineCents(item), 0) / 100)
 const savedOrder = computed(() => mode.value === 'view-order' ? orderView.value : null)
 
-function syncHotelUrl() {
-  if (isStaffPath || wrongPath.value) return
-  const ownerPath = ['/customer', '/customer/catalog', '/customer/orders', '/customer/transactions'].includes(currentPath())
-  const target = isHotelSession.value ? (ownerPath ? currentPath() : '/customer') : '/'
+function syncSessionUrl() {
+  const path = currentPath()
+  let target = '/'
+  if (session.value) {
+    if (isHotelSession.value) {
+      target = ['/customer', '/customer/catalog', '/customer/orders', '/customer/transactions'].includes(path) ? path : '/customer'
+    } else {
+      target = path === '/admin' || Object.values(staffPaths).includes(path) ? path : staffPaths.orders
+    }
+  }
   if (currentPath() !== target) window.history.replaceState(window.history.state, '', target)
 }
 function clearMessages() {
@@ -95,7 +102,7 @@ async function action(run) {
 }
 
 async function refresh() {
-  if (!isStaffPath || !session.value || isHotelSession.value) return
+  if (!session.value || isHotelSession.value) return
   const [orderData, customerData, productData] = await Promise.all([api('/orders'), api('/customers'), api('/products')])
   orders.value = collection(orderData, 'orders')
   customers.value = collection(customerData, 'customers')
@@ -104,30 +111,30 @@ async function refresh() {
 onMounted(async () => {
   try {
     session.value = resource(await api('/me'), 'user')
+    syncSessionUrl()
     await refresh()
   } catch (e) {
     if (e.status !== 401) error.value = e.message
   } finally {
-    syncHotelUrl()
+    syncSessionUrl()
     loading.value = false
   }
 })
 function signIn() {
   return action(async () => {
-    await api(isStaffPath ? '/login' : '/portal/login', 'POST', credentials.value)
-    session.value = resource(await api('/me'), 'user')
-    syncHotelUrl()
+    session.value = resource(await api('/login', 'POST', credentials.value), 'user')
+    syncSessionUrl()
     credentials.value.password = ''
     filter.value = 'all'
     dateFrom.value = ''
     dateTo.value = ''
-    if (isStaffPath) navigate(page.value, false)
+    if (!isHotelSession.value) navigate('orders', false)
     await refresh()
   })
 }
 function sessionEnded() {
   session.value = null
-  syncHotelUrl()
+  syncSessionUrl()
   credentials.value.password = ''
   error.value = 'Your session ended. Sign in again to continue.'
 }
@@ -135,19 +142,18 @@ function signOut() {
   return action(async () => {
     await api('/logout', 'POST')
     session.value = null
-    syncHotelUrl()
+    syncSessionUrl()
     prices.value = []
     orders.value = []
     customers.value = []
     products.value = []
     pricingCustomer.value = ''
-    if (isStaffPath && currentPath() !== '/admin') window.history.replaceState(window.history.state, '', '/admin')
     navigate('orders', false)
   })
 }
 
 function navigate(key, updateUrl = true) {
-  if (updateUrl && isStaffPath && session.value && !isHotelSession.value && staffPaths[key] && currentPath() !== staffPaths[key]) {
+  if (updateUrl && session.value && !isHotelSession.value && staffPaths[key] && currentPath() !== staffPaths[key]) {
     window.history.replaceState(window.history.state, '', staffPaths[key])
   }
   page.value = key
@@ -296,7 +302,7 @@ function saveCustomer() {
     })
     await refresh()
     back()
-    notice.value = 'Hotel saved.'
+    notice.value = 'Customer saved.'
   })
 }
 function editProduct(item) {
@@ -343,7 +349,7 @@ function savePrice() {
     await api('/prices', 'PUT', { customerId: Number(pricingCustomer.value), productId: Number(productId), unit, price: Number(price) })
     await loadPrices(pricingCustomer.value)
     pricingDraft.value = null
-    notice.value = 'Hotel price saved.'
+    notice.value = 'Customer price saved.'
   })
 }
 function removePrice(item) {
@@ -359,65 +365,66 @@ function removePrice(item) {
 
 <template>
   <main v-if="loading" class="loading-view"><span class="brand-mark"><Icon name="orders" /></span> Opening OrderDesk…</main>
-  <main v-else-if="!session || wrongPath" class="login-shell">
+  <main v-else-if="!session" class="login-shell">
     <div class="login-visual">
-      <div class="brand"><span class="brand-mark"><Icon name="orders" /></span> OrderDesk</div>
-      <div class="login-copy">
-        <span class="eyebrow">HOTEL SUPPLY ORDERS</span>
-        <h1>From order<br>to invoice.</h1>
-        <p>{{ isStaffPath ? 'Record orders from hotels, confirm quantities and prices, and print the final invoice.' : 'Order supplies at your hotel’s agreed prices and view your invoices and payments.' }}</p>
+      <BrandLogo />
+      <div class="login-story">
+        <span class="login-eyebrow">WELCOME BACK</span>
+        <h1>Ordering,<br> made simple.</h1>
+        <p>Everyday supplies for your hostel.<br>Order, track, and manage invoices in one place.</p>
       </div>
-      <div class="login-foot">{{ isStaffPath ? 'STAFF WORKSPACE' : 'HOTEL PORTAL' }}</div>
+      <small>For hostel owners &amp; managers</small>
     </div>
-    <div v-if="wrongPath" class="login-form">
-      <span class="eyebrow">ORDERDESK ACCESS</span><h2>Switch account</h2>
-      <p>You’re signed in to the {{ isHotelSession ? 'hotel portal' : 'staff workspace' }}. Open that workspace or sign out to use this page.</p>
-      <div v-if="error" class="alert error" role="alert">{{ error }}</div>
-      <a :href="isHotelSession ? '/' : '/admin'" class="primary portal-login-link">{{ isHotelSession ? 'Open hotel portal' : 'Open staff workspace' }} <Icon name="arrow" /></a>
-      <button class="secondary" :disabled="busy" type="button" @click="signOut">Sign out</button>
+    <div class="login-main">
+      <div class="login-card">
+        <span class="login-eyebrow">YOUR HOSTEL, IN SYNC</span>
+        <h1 id="sign-in-heading">Welcome back</h1>
+        <p class="login-intro">Sign in to your OrderDesk account.</p>
+        <form class="login-form" aria-labelledby="sign-in-heading" @submit.prevent="signIn">
+          <div v-if="error" class="alert error" role="alert">{{ error }}</div>
+          <label>Email or username <input v-model.trim="credentials.username" autocomplete="username" required autofocus /></label>
+          <PasswordField v-model="credentials.password" label="Password" autocomplete="current-password" required />
+          <button class="primary" :disabled="busy" type="submit">{{ busy ? 'Signing in…' : 'Sign in' }}</button>
+        </form>
+      </div>
     </div>
-    <form v-else class="login-form" @submit.prevent="signIn">
-      <span v-if="isStaffPath" class="eyebrow">STAFF ACCESS</span>
-      <h2>{{ isStaffPath ? 'Staff sign in' : 'Sign In' }}</h2>
-      <p>{{ isStaffPath ? 'Use your staff account to open the order desk.' : 'Sign in to OrderDesk.' }}</p>
-      <div v-if="error" class="alert error" role="alert">{{ error }}</div>
-      <label>Email or username <input v-model.trim="credentials.username" autocomplete="username" required /></label>
-      <label>Password <input v-model="credentials.password" type="password" autocomplete="current-password" required /></label>
-      <button class="primary" :disabled="busy" type="submit">{{ busy ? 'Signing in…' : 'Sign in' }} <Icon name="arrow" /></button>
-      <a :href="isStaffPath ? '/' : '/admin'" class="portal-switch-link">{{ isStaffPath ? 'Hotel owner sign in' : 'Staff sign in' }}</a>
-    </form>
   </main>
 
   <HotelPortal v-else-if="isHotelSession" :session="session" :busy="busy" :session-error="error" @sign-out="signOut" @sign-in-needed="sessionEnded" />
 
   <div v-else class="shell">
     <aside class="sidebar">
-      <div class="brand"><span class="brand-mark"><Icon name="orders" /></span><div>OrderDesk<span>HOTEL SUPPLY ORDERS</span></div></div>
+      <BrandLogo />
       <nav aria-label="Workspace">
         <span class="nav-caption">WORKSPACE</span>
         <button v-for="entry in nav" :key="entry.key" type="button" :class="{ selected: page === entry.key }" :aria-current="page === entry.key ? 'page' : undefined" :disabled="busy" @click="navigate(entry.key)">
           <Icon :name="entry.icon" /><span>{{ entry.label }}</span>
         </button>
       </nav>
-      <div class="side-footer">
-        <div class="avatar">{{ (session.username || session.name || 'S')[0].toUpperCase() }}</div>
-        <div class="session-name">{{ session.username || session.name || 'Staff' }}<small>Staff account</small></div>
-        <button class="icon-button" type="button" title="Sign out" aria-label="Sign out" :disabled="busy" @click="signOut"><Icon name="logout" /></button>
+      <div class="sidebar-bottom">
+        <div class="user-card">
+          <span class="avatar">{{ (session.username || session.name || 'S')[0].toUpperCase() }}</span>
+          <span>{{ session.username || session.name || 'Staff' }}<small>Staff workspace</small></span>
+          <button class="signout-button" type="button" :disabled="busy" @click="signOut()"><Icon name="logout" /> Sign out</button>
+        </div>
       </div>
     </aside>
     <main class="content">
-      <div class="topline"><span>Hotel supply orders</span><span aria-hidden="true" class="topline-slash">/</span>{{ section.label }}<strong>Staff workspace</strong></div>
+      <div class="topline">
+        <span>Hotel supply orders</span><span aria-hidden="true" class="topline-slash">/</span>{{ section.label }}
+        <button class="icon-button mobile-signout" type="button" :disabled="busy" aria-label="Sign out" @click="signOut()"><Icon name="logout" /></button>
+      </div>
       <header class="page-head">
         <div>
           <button v-if="mode" class="back-link" type="button" :disabled="busy" @click="back"><Icon name="back" /> Back to {{ section.label.toLowerCase() }}</button>
           <div v-else class="eyebrow page-eyebrow">HOTEL SUPPLY</div>
-          <h1>{{ mode === 'edit-order' ? (draft.id ? 'Edit order' : 'New order') : mode === 'view-order' ? (savedOrder.invoiceNumber || 'Order ' + orderCode(savedOrder.id)) : mode === 'edit-customer' ? (draft.id ? 'Edit hotel' : 'New hotel') : mode === 'edit-product' ? (draft.id ? 'Edit product' : 'New product') : section.label }}</h1>
+          <h1>{{ mode === 'edit-order' ? (draft.id ? 'Edit order' : 'New order') : mode === 'view-order' ? (savedOrder.invoiceNumber || 'Order ' + orderCode(savedOrder.id)) : mode === 'edit-customer' ? (draft.id ? 'Edit customer' : 'New customer') : mode === 'edit-product' ? (draft.id ? 'Edit product' : 'New product') : section.label }}</h1>
           <p v-if="!mode">{{ section.subtitle }}</p>
           <p v-else-if="mode === 'edit-order'">Enter the customer’s items and confirm the final quantities before invoicing.</p>
           <p v-else-if="mode === 'view-order'">Order {{ orderCode(savedOrder.id) }} · {{ date(savedOrder.createdAt) }}<template v-if="savedOrder.source === 'portal'"> · Hotel portal</template></p>
         </div>
         <button v-if="!mode && page !== 'prices'" class="primary" :disabled="busy" type="button" @click="page === 'orders' ? newOrder() : page === 'customers' ? editCustomer() : editProduct()">
-          <Icon name="plus" /> {{ page === 'orders' ? 'New order' : page === 'customers' ? 'New hotel' : 'New product' }}
+          <Icon name="plus" /> {{ page === 'orders' ? 'New order' : page === 'customers' ? 'New customer' : 'New product' }}
         </button>
         <button v-if="savedOrder?.status === 'invoiced'" class="primary" type="button" @click="printInvoice"><Icon name="print" /> Print invoice</button>
       </header>
@@ -433,13 +440,13 @@ function removePrice(item) {
             <span class="hint status-currency">MYR · Hotel supplies</span>
           </div>
           <div class="toolbar order-filters">
-            <label class="search"><Icon name="search" /><input v-model="search" type="search" aria-label="Search orders" placeholder="Search order, invoice or hotel…" /></label>
+            <label class="search"><Icon name="search" /><input v-model="search" type="search" aria-label="Search orders" placeholder="Search order, invoice or customer…" /></label>
             <label class="date-filter">From <input v-model="dateFrom" type="date" aria-label="From date" /></label>
             <label class="date-filter">To <input v-model="dateTo" type="date" aria-label="To date" /></label>
           </div>
           <div class="dataset-note"><span>Order records</span><span>{{ filteredOrders.length }} {{ filteredOrders.length === 1 ? 'order' : 'orders' }}</span></div>
           <div v-if="filteredOrders.length" class="table-wrap"><table>
-            <thead><tr><th>Order</th><th>Hotel</th><th>Date</th><th>Status</th><th class="right">Total</th><th></th></tr></thead>
+            <thead><tr><th>Order</th><th>Customer</th><th>Date</th><th>Status</th><th class="right">Total</th><th></th></tr></thead>
             <tbody>
               <tr v-for="o in filteredOrders" :key="o.id">
                 <td><button class="text-button" :disabled="busy" type="button" @click="openOrder(o.id)">{{ orderCode(o.id) }}</button><small v-if="o.invoiceNumber">{{ o.invoiceNumber }}</small></td>
@@ -450,7 +457,7 @@ function removePrice(item) {
               </tr>
             </tbody>
           </table></div>
-          <div v-else class="empty"><div class="empty-icon"><Icon name="orders" /></div><h2>{{ orders.length ? 'No matching orders' : 'No orders yet' }}</h2><p>{{ orders.length ? 'Try another search or status.' : 'Add a hotel and a product, then enter your first order.' }}</p></div>
+          <div v-else class="empty"><div class="empty-icon"><Icon name="orders" /></div><h2>{{ orders.length ? 'No matching orders' : 'No orders yet' }}</h2><p>{{ orders.length ? 'Try another search or status.' : 'Add a customer and a product, then enter your first order.' }}</p></div>
         </section>
       </template>
 
@@ -460,16 +467,16 @@ function removePrice(item) {
           <section class="panel padded">
             <div class="section-row numbered"><span class="step" aria-hidden="true">01</span><h2>Order details</h2></div>
             <div class="fields">
-              <label>Hotel
+              <label>Customer
                 <select v-model="draft.customerId" :disabled="busy || draft.source === 'portal'" required @change="changeOrderCustomer">
-                  <option value="" disabled>Select a hotel</option>
+                  <option value="" disabled>Select a customer</option>
                   <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.name }}</option>
                 </select>
               </label>
               <label>Notes <input v-model="draft.notes" placeholder="Optional delivery details or order reference" maxlength="1000" /></label>
             </div>
-            <p v-if="draft.source === 'portal'" class="hint">The hotel account is locked for orders submitted through the portal.</p>
-            <p v-else-if="!customers.length" class="hint">Add a hotel in Hotels before entering an order.</p>
+            <p v-if="draft.source === 'portal'" class="hint">The customer is locked for orders submitted through the portal.</p>
+            <p v-else-if="!customers.length" class="hint">Add a customer in Customers before entering an order.</p>
           </section>
           <section class="panel padded">
             <div class="section-row numbered"><span class="step" aria-hidden="true">02</span><div><h2>Order items</h2><p class="hint">Adjust quantities and override a unit price only for this order.</p></div></div>
@@ -552,7 +559,7 @@ function removePrice(item) {
 
       <template v-else-if="page === 'customers' && !mode">
         <section class="panel">
-          <div class="toolbar"><h2>Hotel directory</h2><label class="search"><Icon name="search" /><input v-model="search" aria-label="Search hotels" placeholder="Search hotels…" /></label></div>
+          <div class="toolbar"><h2>Customer directory</h2><label class="search"><Icon name="search" /><input v-model="search" aria-label="Search customers" placeholder="Search customers…" /></label></div>
           <div v-if="filteredCustomers.length" class="table-wrap"><table>
             <thead><tr><th>Name</th><th>Phone</th><th>Notes</th><th></th></tr></thead>
             <tbody><tr v-for="c in filteredCustomers" :key="c.id">
@@ -561,15 +568,15 @@ function removePrice(item) {
               <td class="right"><button class="secondary compact" type="button" :disabled="busy" @click="showCustomerPrices(c)">Manage prices</button></td>
             </tr></tbody>
           </table></div>
-          <div v-else class="empty"><div class="empty-icon"><Icon name="customers" /></div><h2>{{ customers.length ? 'No matching hotels' : 'No hotels yet' }}</h2><p>{{ customers.length ? 'Try another search.' : 'Add your first hotel to start entering orders.' }}</p></div>
+          <div v-else class="empty"><div class="empty-icon"><Icon name="customers" /></div><h2>{{ customers.length ? 'No matching customers' : 'No customers yet' }}</h2><p>{{ customers.length ? 'Try another search.' : 'Add your first customer to start entering orders.' }}</p></div>
         </section>
       </template>
 
       <template v-else-if="mode === 'edit-customer'">
       <form class="panel padded edit-panel stack" @submit.prevent="saveCustomer">
-        <div class="fields"><label>Hotel or company name <input v-model.trim="draft.name" required maxlength="160" /></label><label>Phone <input v-model.trim="draft.phone" type="tel" maxlength="60" /></label></div>
+        <div class="fields"><label>Customer name <input v-model.trim="draft.name" required maxlength="160" /></label><label>Phone <input v-model.trim="draft.phone" type="tel" maxlength="60" /></label></div>
         <label>Notes <textarea v-model="draft.notes" rows="3" maxlength="1000"></textarea></label>
-        <div class="actions"><button class="secondary" :disabled="busy" type="button" @click="back">Back</button><button class="primary" :disabled="busy" type="submit">Save hotel</button></div>
+        <div class="actions"><button class="secondary" :disabled="busy" type="button" @click="back">Back</button><button class="primary" :disabled="busy" type="submit">Save customer</button></div>
       </form>
       <HotelAccountTools v-if="draft.id" :hotel="draft" @open-order="openOrder" @sign-in-needed="sessionEnded" />
       </template>
@@ -606,9 +613,9 @@ function removePrice(item) {
       <template v-else-if="page === 'prices'">
         <section class="panel">
           <div class="toolbar">
-            <label>Hotel
+            <label>Customer
               <select v-model="pricingCustomer" :disabled="busy" @change="changePricingCustomer">
-                <option value="" disabled>Select a hotel</option>
+                <option value="" disabled>Select a customer</option>
                 <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.name }}</option>
               </select>
             </label>
@@ -628,25 +635,20 @@ function removePrice(item) {
                   <option v-for="u in productFor(pricingDraft.productId)?.units ?? []" :key="u.unit" :value="u.unit">{{ u.unit }}</option>
                 </select>
               </label>
-              <label>Hotel price (RM) <input v-model="pricingDraft.price" type="number" required min="0" step="0.01" /></label>
+              <label>Customer price (RM) <input v-model="pricingDraft.price" type="number" required min="0" step="0.01" /></label>
             </div>
             <div class="actions"><button class="secondary" :disabled="busy" type="button" @click="pricingDraft = null">Back</button><button class="primary" :disabled="busy" type="submit">Save custom price</button></div>
           </form>
           <div v-if="pricingCustomer && prices.length" class="table-wrap"><table>
-            <thead><tr><th>Product</th><th>Unit</th><th class="right">Hotel price</th><th></th></tr></thead>
+            <thead><tr><th>Product</th><th>Unit</th><th class="right">Customer price</th><th></th></tr></thead>
             <tbody><tr v-for="p in prices" :key="p.productId + ':' + p.unit">
               <td>{{ productFor(p.productId)?.name || p.productName || 'Product ' + p.productId }}</td><td>{{ p.unit }}</td><td class="right">{{ money(p.price) }}</td>
               <td class="right"><button class="secondary compact" :disabled="busy" type="button" @click="editPrice(p)">Edit price</button> <button class="secondary compact" :disabled="busy" type="button" @click="removePrice(p)">Remove</button></td>
             </tr></tbody>
           </table></div>
-          <div v-else-if="!pricingDraft" class="empty"><div class="empty-icon"><Icon name="prices" /></div><h2>{{ pricingCustomer ? 'No custom prices' : 'Select a hotel' }}</h2><p>{{ pricingCustomer ? 'This hotel currently uses base prices for all products.' : 'Choose the hotel whose prices you want to view or edit.' }}</p></div>
+          <div v-else-if="!pricingDraft" class="empty"><div class="empty-icon"><Icon name="prices" /></div><h2>{{ pricingCustomer ? 'No custom prices' : 'Select a customer' }}</h2><p>{{ pricingCustomer ? 'This customer currently uses base prices for all products.' : 'Choose the customer whose prices you want to view or edit.' }}</p></div>
         </section>
       </template>
     </main>
   </div>
 </template>
-
-<style scoped>
-.portal-login-link { text-decoration: none; }
-.portal-switch-link { color: var(--brand); font-size: .84rem; justify-self: start; }
-</style>
