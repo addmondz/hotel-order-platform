@@ -22,11 +22,24 @@ foreach ([
     '/customer/transactions',
     '/admin',
     '/admin/orders',
+    '/admin/orders/new',
     '/admin/hotels',
+    '/admin/hotels/new',
     '/admin/products',
+    '/admin/products/new',
     '/admin/prices',
 ] as $path) {
     Route::get($path, $spa);
+}
+
+foreach ([
+    '/customer/orders/{id}',
+    '/admin/orders/{id}',
+    '/admin/orders/{id}/edit',
+    '/admin/hotels/{id}/edit',
+    '/admin/products/{id}/edit',
+] as $path) {
+    Route::get($path, $spa)->where('id', '[1-9][0-9]*');
 }
 
 Route::prefix('api')->group(function () {

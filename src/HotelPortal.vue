@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Icon from './Icon.vue'
 import BrandLogo from './BrandLogo.vue'
 import TransactionHistory from './TransactionHistory.vue'
@@ -8,19 +8,26 @@ import { api, collection, resource } from './api'
 const props = defineProps({ session: Object, busy: Boolean, sessionError: String })
 const emit = defineEmits(['sign-out', 'sign-in-needed'])
 const ownerPaths = { catalogue: '/customer/catalog', orders: '/customer/orders', transactions: '/customer/transactions' }
-const route = () => window.location.pathname.replace(/\/+$/, '')
-const tab = ref(Object.keys(ownerPaths).find(key => ownerPaths[key] === route()) || 'catalogue')
-function setTab(key) {
-  tab.value = key
-  if (ownerPaths[key] !== route()) window.history.replaceState(window.history.state, '', ownerPaths[key])
+const currentPath = () => window.location.pathname.replace(/\/+$/, '')
+const orderPath = id => ownerPaths.orders + '/' + encodeURIComponent(id)
+function readRoute() {
+  const path = currentPath()
+  const orderId = /^\/customer\/orders\/(\d+)$/.exec(path)?.[1] ?? null
+  return { tab: orderId ? 'orders' : (Object.keys(ownerPaths).find(key => ownerPaths[key] === path) || 'catalogue'), orderId }
 }
+const route = ref(readRoute())
+const tab = computed(() => route.value.tab)
+const orderId = computed(() => route.value.orderId)
 const details = ref(null)
 const catalog = ref(null)
 const orders = ref([])
 const cart = ref([])
 const search = ref('')
 const notes = ref('')
-const pending = ref(false)
+const loadingRoute = ref(false)
+const submitting = ref(false)
+const pending = computed(() => loadingRoute.value || submitting.value)
+let routeRevision = 0
 const error = ref('')
 const notice = ref('')
 const uncertain = ref(false)
@@ -49,48 +56,72 @@ const controlsBusy = computed(() => props.busy || pending.value)
 const userMenu = ref(false)
 function toggleUserMenu() { userMenu.value = !userMenu.value }
 
-async function act(run) {
-  if (pending.value) return
-  pending.value = true
-  error.value = ''
-  try {
-    await run()
-  } catch (e) {
-    if (e.status === 401) emit('sign-in-needed')
-    else error.value = e.message
-  } finally {
-    pending.value = false
-  }
-}
-async function loadCatalog() {
-  catalog.value = await api('/portal/catalog')
+async function loadCatalog(revision) {
+  const result = await api('/portal/catalog')
+  if (revision !== routeRevision) return
+  catalog.value = result
   for (const row of cart.value) {
     const unit = catalog.value.products.find(p => p.id === row.productId)?.units.find(u => u.unit === row.unit)
     row.unavailable = !unit
     if (unit) row.price = unit.price
   }
 }
-async function loadOrders() {
-  orders.value = collection(await api('/portal/orders'), 'orders')
+async function loadOrders(revision) {
+  const result = collection(await api('/portal/orders'), 'orders')
+  if (revision === routeRevision) orders.value = result
 }
-onMounted(() => act(() => tab.value === 'orders' ? Promise.all([loadCatalog(), loadOrders()]) : loadCatalog()))
 
-function navigate(key) {
-  if (controlsBusy.value) return
-  setTab(key)
+async function applyRoute({ submitted = null, message = '' } = {}) {
+  const revision = ++routeRevision
+  route.value = readRoute()
   details.value = null
   error.value = ''
-  notice.value = ''
-  window.scrollTo(0, 0)
-  if (key === 'catalogue') return act(loadCatalog)
-  if (key === 'orders') return act(loadOrders)
+  notice.value = submitted ? message : ''
+  if (!submitted && message) error.value = message
+  if (submitted) details.value = submitted
+  userMenu.value = false
+  const jobs = []
+  if (tab.value === 'catalogue' || !catalog.value) jobs.push(loadCatalog(revision))
+  if (orderId.value && !submitted) {
+    const id = orderId.value
+    jobs.push(api('/portal/orders/' + encodeURIComponent(id)).then(result => {
+      if (revision === routeRevision) details.value = resource(result, 'order')
+    }))
+  } else if (tab.value === 'orders' && !orderId.value) {
+    jobs.push(loadOrders(revision))
+  }
+  loadingRoute.value = jobs.length > 0
+  const results = await Promise.allSettled(jobs)
+  if (revision !== routeRevision) return
+  loadingRoute.value = false
+  const failures = results.filter(result => result.status === 'rejected').map(result => result.reason)
+  if (failures.some(failure => failure.status === 401)) emit('sign-in-needed')
+  else if (!message && failures.length) error.value = failures.at(-1).message
+}
+function onPopState() { void applyRoute() }
+onMounted(() => {
+  window.addEventListener('popstate', onPopState)
+  void applyRoute()
+})
+onUnmounted(() => {
+  window.removeEventListener('popstate', onPopState)
+  routeRevision++
+})
+
+function visit(path, options) {
+  if (path !== currentPath()) {
+    window.history.pushState(window.history.state, '', path)
+    window.scrollTo(0, 0)
+  }
+  return applyRoute(options)
+}
+function navigate(key) {
+  if (controlsBusy.value) return
+  return visit(ownerPaths[key])
 }
 function selectOrder(id) {
-  return act(async () => {
-    details.value = resource(await api('/portal/orders/' + encodeURIComponent(id)), 'order')
-    setTab('orders')
-    window.scrollTo(0, 0)
-  })
+  if (controlsBusy.value) return
+  return visit(orderPath(id))
 }
 function addItem(product, unit) {
   if (controlsBusy.value) return
@@ -101,9 +132,12 @@ function addItem(product, unit) {
     cart.value.push({ productId: product.id, name: product.name, unit: unit.unit, price: unit.price, quantity: 1 })
   }
 }
-function submitOrder() {
+async function submitOrder() {
   if (controlsBusy.value || !cart.value.length || uncertain.value || cart.value.some(row => row.unavailable)) return
-  return act(async () => {
+  const revision = routeRevision
+  submitting.value = true
+  error.value = ''
+  try {
     let submitted
     try {
       submitted = await api('/portal/orders', 'POST', {
@@ -113,25 +147,30 @@ function submitOrder() {
     } catch (e) {
       if (!e.status || e.status >= 500) {
         uncertain.value = true
-        setTab('orders')
-        error.value = 'We couldn’t confirm the order was submitted. Check My orders before submitting the same order again.'
-        window.scrollTo(0, 0)
-        try { await loadOrders() } catch { /* Keep the original submission warning. */ }
+        if (revision === routeRevision) await visit(ownerPaths.orders, {
+          message: 'We couldn’t confirm the order was submitted. Check My orders before submitting the same order again.',
+        })
         return
       }
       if (e.status === 400 || e.status === 409 || e.status === 422) {
-        try { await loadCatalog() } catch { /* Keep the original validation reason. */ }
+        try { await loadCatalog(revision) } catch { /* Keep the original validation reason. */ }
       }
       throw e
     }
-    details.value = resource(submitted, 'order')
+    const order = resource(submitted, 'order')
     cart.value = []
     notes.value = ''
     uncertain.value = false
-    setTab('orders')
-    notice.value = 'Order submitted. The supplier will confirm quantities before issuing the invoice.'
-    window.scrollTo(0, 0)
-  })
+    if (revision === routeRevision) await visit(orderPath(order.id), {
+      submitted: order,
+      message: 'Order submitted. The supplier will confirm quantities before issuing the invoice.',
+    })
+  } catch (e) {
+    if (e.status === 401) emit('sign-in-needed')
+    else if (revision === routeRevision) error.value = e.message
+  } finally {
+    submitting.value = false
+  }
 }
 function printOrder() { window.print() }
 </script>
@@ -171,7 +210,7 @@ function printOrder() { window.print() }
       </div>
       <header class="page-head">
         <div>
-          <button v-if="details" class="back-link" type="button" :disabled="controlsBusy" @click="navigate('orders')"><Icon name="back" /> Back to my orders</button>
+          <button v-if="orderId" class="back-link" type="button" :disabled="controlsBusy" @click="navigate('orders')"><Icon name="back" /> Back to my orders</button>
           <div v-else class="eyebrow page-eyebrow">HOTEL SUPPLY</div>
           <h1>{{ details ? (details.invoiceNumber || 'Order ' + orderCode(details.id)) : section.name }}</h1>
           <p v-if="details">Order {{ orderCode(details.id) }} · {{ date(details.createdAt) }}</p>
@@ -180,7 +219,8 @@ function printOrder() { window.print() }
           <p v-else>View your hotel’s invoices, recorded payments, and balance.</p>
         </div>
         <button v-if="details?.status === 'invoiced'" class="primary" type="button" @click="printOrder"><Icon name="print" /> Print invoice</button>
-        <button v-else-if="tab === 'orders' && !details" class="secondary" type="button" :disabled="controlsBusy" @click="navigate('orders')">Refresh orders</button>
+        <button v-else-if="tab === 'orders' && !orderId" class="secondary" type="button" :disabled="controlsBusy" @click="navigate('orders')">Refresh orders</button>
+        <button v-else-if="orderId && error" class="secondary" type="button" :disabled="controlsBusy" @click="applyRoute()">Retry</button>
       </header>
 
       <div v-if="error || sessionError" class="alert error" role="alert">{{ error || sessionError }}</div>
@@ -192,7 +232,7 @@ function printOrder() { window.print() }
           <div class="toolbar catalogue-toolbar">
             <h2>Available products</h2>
             <label class="search"><Icon name="search" /><input v-model="search" type="search" aria-label="Search products" placeholder="Search product name or SKU…" /></label>
-            <button v-if="!catalog && !pending" type="button" class="secondary" :disabled="controlsBusy" @click="act(loadCatalog)">Retry</button>
+            <button v-if="!catalog && !pending" type="button" class="secondary" :disabled="controlsBusy" @click="applyRoute()">Retry</button>
           </div>
           <div v-if="filteredProducts.length" class="catalog-list">
             <article v-for="product in filteredProducts" :key="product.id" class="catalog-product">
@@ -224,7 +264,7 @@ function printOrder() { window.print() }
         </form>
       </div>
 
-      <section v-else-if="tab === 'orders' && !details" class="panel">
+      <section v-else-if="tab === 'orders' && !orderId" class="panel">
         <div v-if="orders.length" class="table-wrap"><table>
           <thead><tr><th>Order</th><th>Date</th><th>Status</th><th>Invoice</th><th class="right">Total</th></tr></thead>
           <tbody><tr v-for="order in orders" :key="order.id">
@@ -252,7 +292,7 @@ function printOrder() { window.print() }
         <p v-if="details.notes && details.status !== 'invoiced'" class="document-notes"><strong>Your notes</strong><br>{{ details.notes }}</p>
       </section>
 
-      <TransactionHistory v-else :link-orders="true" @open-order="selectOrder" @sign-in-needed="emit('sign-in-needed')" />
+      <TransactionHistory v-else-if="tab === 'transactions'" :link-orders="true" @open-order="selectOrder" @sign-in-needed="emit('sign-in-needed')" />
     </main>
   </div>
 </template>

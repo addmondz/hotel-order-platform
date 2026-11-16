@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Icon from './Icon.vue'
 import BrandLogo from './BrandLogo.vue'
 import PasswordField from './PasswordField.vue'
@@ -10,16 +10,22 @@ import { api, collection, resource } from './api'
 
 const currentPath = () => window.location.pathname.replace(/\/+$/, '') || '/'
 const staffPaths = { orders: '/admin/orders', customers: '/admin/hotels', products: '/admin/products', prices: '/admin/prices' }
-const initialStaffPage = Object.keys(staffPaths).find(key => staffPaths[key] === currentPath()) || 'orders'
+const customerPath = /^\/customer(?:\/(?:catalog|transactions|orders(?:\/[1-9][0-9]*)?))?$/
+const staffOrderPath = /^\/admin\/orders\/([1-9][0-9]*)(\/edit)?$/
+const staffFormPath = /^\/admin\/(hotels|products)\/(new|([1-9][0-9]*)\/edit)$/
 const nav = [
   { key: 'orders', label: 'Orders', icon: 'orders', subtitle: 'Manage WhatsApp and hotel portal orders, then issue invoices.' },
   { key: 'customers', label: 'Customers', icon: 'customers', subtitle: 'Manage the customers your team supplies.' },
   { key: 'products', label: 'Products', icon: 'products', subtitle: 'Set the selling units and base prices for your catalogue.' },
   { key: 'prices', label: 'Customer prices', icon: 'prices', subtitle: 'Set agreed rates for each customer without changing the catalogue.' },
 ]
-const page = ref(initialStaffPage)
+const page = ref('orders')
 const section = computed(() => nav.find(entry => entry.key === page.value))
 const mode = ref('')
+const routeLoading = ref(false)
+const routeFailed = ref(false)
+let routeRequest = 0
+let backNotice = ''
 const loading = ref(true)
 const session = ref(null)
 const isHotelSession = computed(() => session.value?.role === 'hotel')
@@ -70,16 +76,12 @@ const estimatedTotal = computed(() => (draft.value?.items ?? []).reduce((sum, it
 const savedOrder = computed(() => mode.value === 'view-order' ? orderView.value : null)
 
 function syncSessionUrl() {
+  if (!session.value) return
   const path = currentPath()
-  let target = '/'
-  if (session.value) {
-    if (isHotelSession.value) {
-      target = ['/customer', '/customer/catalog', '/customer/orders', '/customer/transactions'].includes(path) ? path : '/customer'
-    } else {
-      target = path === '/admin' || Object.values(staffPaths).includes(path) ? path : staffPaths.orders
-    }
-  }
-  if (currentPath() !== target) window.history.replaceState(window.history.state, '', target)
+  let target = isHotelSession.value ? '/customer' : staffPaths.orders
+  if (isHotelSession.value && customerPath.test(path)) target = path
+  if (!isHotelSession.value && (path === '/admin' || Object.values(staffPaths).includes(path) || path === '/admin/orders/new' || staffOrderPath.test(path) || staffFormPath.test(path))) target = path
+  if (path !== target) window.history.replaceState(null, '', target)
 }
 function clearMessages() {
   error.value = ''
@@ -109,17 +111,21 @@ async function refresh() {
   products.value = collection(productData, 'products')
 }
 onMounted(async () => {
+  window.addEventListener('popstate', onHistoryNavigation)
   try {
     session.value = resource(await api('/me'), 'user')
     syncSessionUrl()
     await refresh()
+    await showStaffRoute()
   } catch (e) {
     if (e.status !== 401) error.value = e.message
+    else if (session.value) sessionEnded()
   } finally {
-    syncSessionUrl()
     loading.value = false
   }
 })
+onUnmounted(() => window.removeEventListener('popstate', onHistoryNavigation))
+
 function signIn() {
   return action(async () => {
     session.value = resource(await api('/login', 'POST', credentials.value), 'user')
@@ -128,54 +134,119 @@ function signIn() {
     filter.value = 'all'
     dateFrom.value = ''
     dateTo.value = ''
-    if (!isHotelSession.value) navigate('orders', false)
     await refresh()
+    await showStaffRoute()
   })
 }
 function sessionEnded() {
+  routeRequest++
+  routeLoading.value = false
   session.value = null
-  syncSessionUrl()
   credentials.value.password = ''
   error.value = 'Your session ended. Sign in again to continue.'
 }
 function signOut() {
   return action(async () => {
     await api('/logout', 'POST')
+    routeRequest++
+    routeLoading.value = false
+    window.history.replaceState(null, '', isHotelSession.value ? '/' : '/admin')
     session.value = null
-    syncSessionUrl()
     prices.value = []
     orders.value = []
     customers.value = []
     products.value = []
     pricingCustomer.value = ''
-    navigate('orders', false)
   })
 }
 
-function navigate(key, updateUrl = true) {
-  if (updateUrl && session.value && !isHotelSession.value && staffPaths[key] && currentPath() !== staffPaths[key]) {
-    window.history.replaceState(window.history.state, '', staffPaths[key])
-  }
-  page.value = key
-  if (key === 'prices') {
-    pricingRequest++
-    pricingCustomer.value = ''
-    pricingDraft.value = null
-    prices.value = []
-  }
+function onHistoryNavigation() {
+  if (!session.value) return
+  syncSessionUrl()
+  if (!isHotelSession.value) void showStaffRoute()
+}
+
+function goToStaffPath(path) {
+  if (busy.value || path === currentPath()) return
+  window.history.pushState({ staffFrom: currentPath() }, '', path)
+  return showStaffRoute()
+}
+
+function navigate(key) { return goToStaffPath(staffPaths[key]) }
+
+async function showStaffRoute() {
+  if (!session.value || isHotelSession.value) return
+  const request = ++routeRequest
+  const path = currentPath()
+  const order = path.match(staffOrderPath)
+  const form = path.match(staffFormPath)
+  const noticeAfterBack = backNotice
+  backNotice = ''
+  pricingRequest++
+  page.value = Object.keys(staffPaths).find(key => staffPaths[key] === path) || (form?.[1] === 'hotels' ? 'customers' : form?.[1] === 'products' ? 'products' : 'orders')
   mode.value = ''
   orderView.value = null
   draft.value = null
   search.value = ''
+  prices.value = []
+  pricingCustomer.value = ''
+  pricingDraft.value = null
+  routeFailed.value = false
+  routeLoading.value = false
   clearMessages()
+  notice.value = noticeAfterBack
   window.scrollTo(0, 0)
+
+  if (path === '/admin/orders/new') {
+    prepareNewOrder()
+  } else if (form) {
+    const item = form[3] ? (page.value === 'customers' ? customers.value : products.value).find(row => String(row.id) === form[3]) : null
+    if (form[3] && !item) {
+      routeFailed.value = true
+      error.value = page.value === 'customers' ? 'Customer not found.' : 'Product not found.'
+    } else if (page.value === 'customers') prepareCustomer(item)
+    else prepareProduct(item)
+  } else if (order) {
+    routeLoading.value = true
+    try {
+      const o = resource(await api('/orders/' + order[1]), 'order')
+      if (request !== routeRequest) return
+      if (order[2] && o.status !== 'open') {
+        window.history.replaceState(window.history.state, '', '/admin/orders/' + o.id)
+        orderView.value = o
+        mode.value = 'view-order'
+        notice.value = 'Only open orders can be edited.'
+      } else if (order[2]) {
+        await loadPrices(o.customerId)
+        if (request === routeRequest) prepareOrderEdit(o)
+      } else {
+        orderView.value = o
+        mode.value = 'view-order'
+      }
+    } catch (e) {
+      if (request !== routeRequest) return
+      if (e.status === 401) sessionEnded()
+      else {
+        routeFailed.value = true
+        error.value = e.status === 404 ? 'Order not found.' : e.message
+      }
+    } finally {
+      if (request === routeRequest) routeLoading.value = false
+    }
+  }
 }
-function back() {
-  mode.value = ''
-  orderView.value = null
-  draft.value = null
-  clearMessages()
-  window.scrollTo(0, 0)
+
+function back(message = '') {
+  // In-app Back follows the section hierarchy, even on a direct link.
+  const path = currentPath()
+  const order = path.match(staffOrderPath)
+  const target = order?.[2] ? '/admin/orders/' + order[1] : staffPaths[page.value]
+  backNotice = typeof message === 'string' ? message : ''
+  if (window.history.state?.staffFrom === target) window.history.back()
+  else {
+    window.history.replaceState(null, '', target)
+    void showStaffRoute()
+  }
 }
 
 async function loadPrices(id) {
@@ -209,46 +280,36 @@ function setUnit(item) {
 function addLine() {
   draft.value.items.push({ key: ++localItemId, productId: '', unit: '', quantity: 1, unitPrice: '', suggestedPrice: 0, priceSource: '' })
 }
-function newOrder() {
-  clearMessages()
-  pricingRequest++
-  prices.value = []
+function newOrder() { return goToStaffPath('/admin/orders/new') }
+function prepareNewOrder() {
   draft.value = { customerId: '', notes: '', items: [] }
   addLine()
   mode.value = 'edit-order'
 }
 function changeOrderCustomer() {
   return action(async () => {
-    if (await loadPrices(draft.value.customerId)) {
-      for (const item of draft.value.items) {
+    const currentDraft = draft.value
+    if (await loadPrices(currentDraft.customerId) && draft.value === currentDraft) {
+      for (const item of currentDraft.items) {
         item.unitPrice = ''
         applySuggestion(item)
       }
     }
   })
 }
-function openOrder(id) {
-  return action(async () => {
-    orderView.value = resource(await api('/orders/' + id), 'order')
-    page.value = 'orders'
-    mode.value = 'view-order'
-    window.scrollTo(0, 0)
-  })
-}
-function editOrder() {
-  return action(async () => {
-    const o = orderView.value
-    await loadPrices(o.customerId)
-    draft.value = {
-      id: o.id,
-      revision: o.revision,
-      source: o.source,
-      customerId: o.customerId,
-      notes: o.notes || '',
-      items: o.items.map(line => ({ ...line, key: ++localItemId, suggestedPrice: line.unitPrice, priceSource: 'Saved price' })),
-    }
-    mode.value = 'edit-order'
-  })
+function openOrder(id) { return goToStaffPath('/admin/orders/' + id) }
+function editOrder() { return goToStaffPath('/admin/orders/' + orderView.value.id + '/edit') }
+function prepareOrderEdit(o) {
+  orderView.value = o
+  draft.value = {
+    id: o.id,
+    revision: o.revision,
+    source: o.source,
+    customerId: o.customerId,
+    notes: o.notes || '',
+    items: o.items.map(line => ({ ...line, key: ++localItemId, suggestedPrice: line.unitPrice, priceSource: 'Saved price' })),
+  }
+  mode.value = 'edit-order'
 }
 function saveOrder() {
   return action(async () => {
@@ -264,7 +325,21 @@ function saveOrder() {
       })),
     }
     const data = await api(d.id ? '/orders/' + d.id : '/orders', d.id ? 'PUT' : 'POST', body)
+    if (draft.value !== d) {
+      await refresh()
+      return
+    }
     orderView.value = resource(data, 'order')
+    const target = '/admin/orders/' + orderView.value.id
+    const from = window.history.state?.staffFrom
+    // Keep the original order detail entry before an edit; avoid a duplicate after saving.
+    if (from === target) {
+      back(d.id ? 'Order updated.' : 'Order entered successfully.')
+      await refresh()
+      return
+    }
+    window.history.replaceState(from ? { staffFrom: from } : null, '', target)
+    draft.value = null
     mode.value = 'view-order'
     if (!d.id) { filter.value = 'all'; dateFrom.value = ''; dateTo.value = ''; search.value = '' }
     notice.value = d.id ? 'Order updated.' : 'Order entered successfully.'
@@ -280,8 +355,12 @@ function moveOrder(next) {
   if (!window.confirm(prompt)) return
   return action(async () => {
     const id = orderView.value.id
-    orderView.value = resource(await api('/orders/' + id + '/' + next, 'POST', { revision: orderView.value.revision }), 'order')
-    notice.value = next === 'invoice' ? 'Invoice issued. It is ready to print.' : 'Order cancelled.'
+    const request = routeRequest
+    const updated = resource(await api('/orders/' + id + '/' + next, 'POST', { revision: orderView.value.revision }), 'order')
+    if (request === routeRequest) {
+      orderView.value = updated
+      notice.value = next === 'invoice' ? 'Invoice issued. It is ready to print.' : 'Order cancelled.'
+    }
     await refresh()
   })
 }
@@ -289,8 +368,8 @@ function printInvoice() {
   window.print()
 }
 
-function editCustomer(item) {
-  clearMessages()
+function editCustomer(item) { return goToStaffPath('/admin/hotels/' + (item ? item.id + '/edit' : 'new')) }
+function prepareCustomer(item) {
   draft.value = item ? { ...item } : { name: '', phone: '', notes: '' }
   mode.value = 'edit-customer'
 }
@@ -301,12 +380,11 @@ function saveCustomer() {
       name: d.name, phone: d.phone || '', notes: d.notes || ''
     })
     await refresh()
-    back()
-    notice.value = 'Customer saved.'
+    if (draft.value === d) back('Customer saved.')
   })
 }
-function editProduct(item) {
-  clearMessages()
+function editProduct(item) { return goToStaffPath('/admin/products/' + (item ? item.id + '/edit' : 'new')) }
+function prepareProduct(item) {
   draft.value = item
     ? { ...item, units: item.units.map(u => ({ ...u, key: ++localItemId })) }
     : { name: '', sku: '', active: true, units: [{ unit: 'piece', price: '', stock: '', key: ++localItemId }] }
@@ -323,8 +401,7 @@ function saveProduct() {
       units: d.units.map(u => ({ unit: u.unit.trim(), price: Number(u.price), stock: u.stock === '' || u.stock == null ? null : Number(u.stock) })),
     })
     await refresh()
-    back()
-    notice.value = 'Product saved.'
+    if (draft.value === d) back('Product saved.')
   })
 }
 function changePricingCustomer() {
@@ -332,6 +409,7 @@ function changePricingCustomer() {
   return action(() => loadPrices(pricingCustomer.value))
 }
 function showCustomerPrices(customer) {
+  if (busy.value) return
   navigate('prices')
   pricingCustomer.value = customer.id
   changePricingCustomer()
@@ -416,14 +494,14 @@ function removePrice(item) {
       </div>
       <header class="page-head">
         <div>
-          <button v-if="mode" class="back-link" type="button" :disabled="busy" @click="back"><Icon name="back" /> Back to {{ section.label.toLowerCase() }}</button>
+          <button v-if="mode || routeLoading || routeFailed" class="back-link" type="button" :disabled="busy" @click="back"><Icon name="back" /> Back to {{ staffOrderPath.test(currentPath()) && currentPath().endsWith('/edit') ? 'order' : section.label.toLowerCase() }}</button>
           <div v-else class="eyebrow page-eyebrow">HOTEL SUPPLY</div>
           <h1>{{ mode === 'edit-order' ? (draft.id ? 'Edit order' : 'New order') : mode === 'view-order' ? (savedOrder.invoiceNumber || 'Order ' + orderCode(savedOrder.id)) : mode === 'edit-customer' ? (draft.id ? 'Edit customer' : 'New customer') : mode === 'edit-product' ? (draft.id ? 'Edit product' : 'New product') : section.label }}</h1>
           <p v-if="!mode">{{ section.subtitle }}</p>
           <p v-else-if="mode === 'edit-order'">Enter the customer’s items and confirm the final quantities before invoicing.</p>
           <p v-else-if="mode === 'view-order'">Order {{ orderCode(savedOrder.id) }} · {{ date(savedOrder.createdAt) }}<template v-if="savedOrder.source === 'portal'"> · Hotel portal</template></p>
         </div>
-        <button v-if="!mode && page !== 'prices'" class="primary" :disabled="busy" type="button" @click="page === 'orders' ? newOrder() : page === 'customers' ? editCustomer() : editProduct()">
+        <button v-if="!mode && !routeLoading && !routeFailed && page !== 'prices'" class="primary" :disabled="busy" type="button" @click="page === 'orders' ? newOrder() : page === 'customers' ? editCustomer() : editProduct()">
           <Icon name="plus" /> {{ page === 'orders' ? 'New order' : page === 'customers' ? 'New customer' : 'New product' }}
         </button>
         <button v-if="savedOrder?.status === 'invoiced'" class="primary" type="button" @click="printInvoice"><Icon name="print" /> Print invoice</button>
@@ -431,7 +509,9 @@ function removePrice(item) {
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
       <div v-if="notice" class="alert success" role="status">{{ notice }}</div>
 
-      <template v-if="page === 'orders' && !mode">
+      <p v-if="routeLoading" class="hint" role="status">Loading order…</p>
+      <template v-else-if="routeFailed"></template>
+      <template v-else-if="page === 'orders' && !mode">
         <section class="panel">
           <div class="status-toolbar">
             <div class="filters" aria-label="Order status">
