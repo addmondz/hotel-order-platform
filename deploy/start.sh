@@ -35,4 +35,8 @@ if [ -n "${RAILWAY_ENVIRONMENT_ID:-}" ] && [ "${mount_path%/}" != "$receipts" ];
 fi
 install -d -o www-data -g www-data -m 0700 "$receipts"
 printf 'Listen %s\n' "$port" > /etc/apache2/ports.conf
+# PHP's Apache module uses prefork. Keep threaded MPM modules disabled.
+rm -f /etc/apache2/mods-enabled/mpm_event.load /etc/apache2/mods-enabled/mpm_event.conf \
+    /etc/apache2/mods-enabled/mpm_worker.load /etc/apache2/mods-enabled/mpm_worker.conf
+a2enmod mpm_prefork >/dev/null
 exec apache2-foreground
