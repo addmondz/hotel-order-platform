@@ -8,6 +8,6 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        // No default credentials or customer data.
+        $this->call(OwnerSeeder::class);
     }
 }

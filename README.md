@@ -28,15 +28,14 @@ cp .env.example .env
 php artisan key:generate
 ```
 
-Update the `DB_*` fields in `backend/.env` to match your MySQL database, then:
+Update the `DB_*` fields in `backend/.env` to match your MySQL database and set `ORDERDESK_ADMIN_PASSWORD` privately (at least 12 characters and at most 72 UTF-8 bytes), then:
 
 ```sh
-php artisan migrate
-php artisan staff:create owner
+php artisan migrate --seed
 php artisan serve
 ```
 
-Open http://127.0.0.1:8000. The staff command prompts privately for a password. Run it again with a different username for each additional employee. Staff accounts have equal access and changes are attributed to the signed-in user.
+Open http://127.0.0.1:8000 and sign in as `admin@admin.com` using the password you set. The seeder does not reset an existing owner password or create sample records. Once the account exists, you can remove `ORDERDESK_ADMIN_PASSWORD` from the local environment. Use `php artisan staff:create <username>` for additional named staff; it prompts privately for a password. Staff accounts have equal access and changes are attributed to the signed-in user.
 
 For frontend development, keep Laravel running on port 8000 and use `npm run dev` from the repo root. Optionally copy the **root** `.env.example` to `.env`, set the invoice seller details, and rebuild. Do not store secrets in frontend environment variables.
 

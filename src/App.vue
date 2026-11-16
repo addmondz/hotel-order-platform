@@ -345,7 +345,7 @@ function removePrice(item) {
       <h2>Sign in</h2>
       <p>Use your staff account to open the order desk.</p>
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
-      <label>Username <input v-model.trim="credentials.username" autocomplete="username" required /></label>
+      <label>Email or username <input v-model.trim="credentials.username" autocomplete="username" required /></label>
       <label>Password <input v-model="credentials.password" type="password" autocomplete="current-password" required /></label>
       <button class="primary" :disabled="busy" type="submit">{{ busy ? 'Signing in…' : 'Sign in' }} <Icon name="arrow" /></button>
     </form>
