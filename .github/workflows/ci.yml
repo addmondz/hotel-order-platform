@@ -47,3 +47,33 @@ jobs:
           DB_DATABASE: orderdesk_test
           DB_USERNAME: orderdesk
           DB_PASSWORD: testing-only
+
+  deploy-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build application image
+        run: docker build -t orderdesk:test .
+      - name: Smoke test the deploy image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint php orderdesk:test -m | grep -xi pdo_mysql
+          key="base64:$(openssl rand -base64 32)"
+          docker run -d --name orderdesk-ci -e "APP_KEY=$key" -e PORT=8091 -e SESSION_DRIVER=array -e CACHE_STORE=array -p 127.0.0.1:18080:8091 orderdesk:test
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:18080/up >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent --show-error http://127.0.0.1:18080/up >/dev/null
+          for page in / /admin /customer; do
+            curl --fail --silent --show-error "http://127.0.0.1:18080$page" | grep -Fq 'id="app"'
+          done
+          asset=$(curl --fail --silent http://127.0.0.1:18080/ | grep -oE '/dist/assets/[^"]+\.js' | head -n 1)
+          curl --fail --silent --show-error "http://127.0.0.1:18080$asset" >/dev/null
+      - name: Show startup logs
+        if: failure()
+        run: docker logs orderdesk-ci || true
+      - name: Remove smoke test container
+        if: always()
+        run: docker rm -f orderdesk-ci || true

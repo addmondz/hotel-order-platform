@@ -64,3 +64,18 @@ Run `npm run build` from the root. Run `php artisan test` from `backend`; the de
 For deployment, serve `backend/public` with HTTPS, disable debug, keep the app key and database credentials private, enable secure session cookies, and use durable database storage and backups.
 
 Payment receipt images are private. Back up `backend/storage/app/private` (or its configured private storage volume) together with the database. Make the volume persistent in production, and set PHP `upload_max_filesize` to at least 5M and `post_max_size` and your reverse proxy limit high enough for the multipart request (for example 8M). Do not add a public symlink to the private receipt directory.
+
+## Railway test deployment
+
+Keep the app and a **new MySQL service** in the same Railway project. This test setup is separate from any existing database or business data. Import the repository root as the app service, using the root Dockerfile.
+
+In the **app service's** Railway variables, set:
+
+- `APP_ENV=production`, `APP_DEBUG=false`, `APP_KEY` (a new Laravel key), `APP_URL` (the test app's HTTPS URL), `SESSION_SECURE_COOKIE=true`.
+- `DB_CONNECTION=mysql` and the five `DB_*` connection variables as references to your MySQL service's private connection settings.
+- `ADMIN_PASSWORD` for the first seed only. Use a unique test password; never commit it or use a live business password.
+- Optional `VITE_INVOICE_SELLER_NAME` and `VITE_INVOICE_SELLER_ADDRESS` for demo invoice branding. These strings are public in the built frontend.
+
+Configure the pre-deploy command to run `php artisan migrate --force` and the HTTP health check path to use `/up`. Mount a private Railway volume at `/app/backend/storage/app/private` for persistent receipt images. Do not expose the MySQL service publicly.
+
+After the first successful deployment, open a shell in the app service and run `php artisan db:seed --force`. This creates only the owner login at `admin@admin.com`. Sign in at `/admin` and add fake hotel accounts and catalogue items to exercise the workflow. The hotel owner login is at `/`.
