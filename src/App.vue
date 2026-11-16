@@ -378,8 +378,8 @@ function removePrice(item) {
     </div>
     <form v-else class="login-form" @submit.prevent="signIn">
       <span v-if="isStaffPath" class="eyebrow">STAFF ACCESS</span>
-      <h2>{{ isStaffPath ? 'Staff sign in' : 'Hotel sign in' }}</h2>
-      <p>{{ isStaffPath ? 'Use your staff account to open the order desk.' : 'Use the account issued for your hotel.' }}</p>
+      <h2>{{ isStaffPath ? 'Staff sign in' : 'Sign In' }}</h2>
+      <p>{{ isStaffPath ? 'Use your staff account to open the order desk.' : 'Sign in to OrderDesk.' }}</p>
       <div v-if="error" class="alert error" role="alert">{{ error }}</div>
       <label>Email or username <input v-model.trim="credentials.username" autocomplete="username" required /></label>
       <label>Password <input v-model="credentials.password" type="password" autocomplete="current-password" required /></label>
