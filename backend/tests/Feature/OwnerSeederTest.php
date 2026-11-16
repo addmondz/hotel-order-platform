@@ -25,13 +25,21 @@ class OwnerSeederTest extends TestCase
 
         config(['initial_admin.password' => 'local-seeder-test-fixture-2']);
         $this->seed();
-        config(['initial_admin.password' => null]);
-        $this->seed();
-
         $this->assertDatabaseCount('users', 1);
         $this->assertSame($hash, $owner->fresh()->password);
         $this->postJson('/api/login', ['username' => OwnerSeeder::EMAIL, 'password' => 'local-seeder-test-fixture-1'])
             ->assertOk()->assertJsonPath('username', OwnerSeeder::EMAIL);
+    }
+
+    public function test_blank_password_is_rejected_even_when_an_owner_exists(): void
+    {
+        config(['initial_admin.password' => 'local-seeder-test-fixture-1']);
+        $this->seed();
+
+        config(['initial_admin.password' => '               ']);
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Set ORDERDESK_ADMIN_PASSWORD');
+        $this->seed();
     }
 
     public function test_blank_password_does_not_create_a_default_owner(): void
